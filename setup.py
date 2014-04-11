@@ -22,7 +22,7 @@ setup(
     packages=find_packages(exclude="test"),
     test_suite='nose.collector',
     install_requires=['pyzmq', 'pybluez', 'enum34', 'protobuf'],
-    tests_require=['nose'],
+    tests_require=['nose', 'coverage'],
     entry_points={
         'console_scripts': [
             'proxy_robots = orwell.proxy_robots.program:main',

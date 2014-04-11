@@ -81,10 +81,8 @@ class MockSubscriber(object):
             self.messages.append(payload)
 
     def read(self):
-        if (self.messages):
-            message = self.messages.pop(0)
-        else:
-            message = None
+        assert(self.messages)
+        message = self.messages.pop(0)
         #print 'Fake reading message =', message
         return message
 
@@ -97,8 +95,9 @@ def test_robot_registration():
         program.add_robot(robot_id, device)
     program.step()
     program.step()
-    for item, expected in zip(program.robots.items(), ROBOT_DESCRIPTORS):
-        robot_id, robot = item
+    for (robot_id, robot), expected in zip(
+            program.robots.items(),
+            ROBOT_DESCRIPTORS):
         expected_robot_id, expected_robot_name, _ = expected
         assert_equals(robot_id, robot.robot_id)
         assert_equals(expected_robot_id, robot_id)
@@ -134,8 +133,9 @@ class DummyDevice(object):
     def __init__(self, robot_id):
         self._moved = False
 
-    def __dell(self):
-        assert_true(self._moved)
+    # it does not work
+    #def __del__(self):
+        #assert_true(self._moved)
 
     def move(
             self,
@@ -220,14 +220,11 @@ class InputMocker(Mocker):
         print 'Fake write'
         if (InputMockerState.Created == self._state):
             message_type, routing_id, raw_message = payload.split(' ', 2)
-            if (opp.Messages.Register.name == message_type):
-                message = opp.REGISTRY[message_type]()
-                message.ParseFromString(raw_message)
-                self._robot_id = message.robot_id
-                self._state = InputMockerState.Register
-            else:
-                print "We should not be here"
-                assert(False)
+            assert_equals(opp.Messages.Register.name, message_type)
+            message = opp.REGISTRY[message_type]()
+            message.ParseFromString(raw_message)
+            self._robot_id = message.robot_id
+            self._state = InputMockerState.Register
 
 
 def test_robot_input():
