@@ -11,12 +11,14 @@ class Messages(Enum):
     Register = 'Register'
     Registered = 'Registered'
     Input = 'Input'
+    GameState = 'GameState'
 
 
 REGISTRY = {
     Messages.Register.name: lambda: robot_messages.Register(),
     Messages.Registered.name: lambda: server_game_messages.Registered(),
     Messages.Input.name: lambda: controller_messages.Input(),
+    Messages.GameState.name: lambda: server_game_messages.GameState(),
 }
 
 
@@ -24,12 +26,18 @@ class Subscriber(object):
     def __init__(self, address, port, context):
         self._socket = context.socket(zmq.SUB)
         self._socket.setsockopt(zmq.LINGER, 0)
-        self._socket.setsockopt(zmq.SUBSCRIBE, "")
         url = "tcp://%s:%i" % (address, port)
         self._socket.connect(url)
+        self._socket.setsockopt(zmq.SUBSCRIBE, "")
 
-    def read(self):
-        return self._socket.recv(flags=zmq.DONTWAIT)
+    def read(self, wait=False):
+        try:
+            if (wait):
+                return self._socket.recv()
+            else:
+                return self._socket.recv(flags=zmq.DONTWAIT)
+        except Exception:
+            return None
 
 
 class Pusher(object):
@@ -112,7 +120,8 @@ class MessageHub(object):
         Process one incomming message (if any) and process all outgoing
         messages (if any).
         """
-        debug = True
+        debug = False
+        light_debug = False
         if (debug):
             print 'MessageHub.step()'
             print '_listeners =', self._listeners
@@ -120,8 +129,8 @@ class MessageHub(object):
         if (debug):
             print 'string =', repr(string)
         if (string is not None):
-            message_type, routing_id, raw_message = string.split(' ', 2)
-            if (debug):
+            routing_id, message_type, raw_message = string.split(' ', 2)
+            if (light_debug):
                 print 'message_type =', message_type
                 print 'routing_id =', routing_id
             message = REGISTRY[message_type]()
@@ -327,17 +336,18 @@ class Actionner(object):
 class Robot(object):
     def __init__(
             self,
-            robot_id,
+            internal_robot_id,
             message_hub,
             actionner,
             device):
         """
-        `robot_id`: identifies the robot somehow.
+        `internal_robot_id`: identifies the robot somehow.
         `message_hub`: used to post message and get notifications.
         `actionner`: object that will run the actions for the robot.
         `device`: deviced used to communicate with the robot.
         """
-        self._robot_id = robot_id
+        self._internal_robot_id = internal_robot_id
+        self._robot_id = None
         self._name = ''
         self._message_hub = message_hub
         self._actionner = actionner
@@ -354,11 +364,14 @@ class Robot(object):
 
     @property
     def robot_id(self):
-        return self._robot_id
+        if (self._robot_id):
+            return self._robot_id
+        else:
+            return self._internal_robot_id
 
-    @property
-    def name(self):
-        return self._name
+    #@property
+    #def name(self):
+        #return self._name
 
     @property
     def left(self):
@@ -401,7 +414,7 @@ class Robot(object):
             self._message_hub,
             self.notify,
             Messages.Registered.name,
-            self._robot_id)
+            self.robot_id)
         action = Action(
             self.register,
             lambda: self.registered,
@@ -414,10 +427,10 @@ class Robot(object):
         Post a message to ask for the registration of the robot.
         """
         message = REGISTRY[Messages.Register.name]()
-        message.robot_id = self._robot_id
+        message.robot_id = self.robot_id
         payload = '{0} {1} {2}'.format(
+            self.robot_id,
             Messages.Register.name,
-            self._robot_id,
             message.SerializeToString())
         self._message_hub.post(payload)
 
@@ -429,7 +442,7 @@ class Robot(object):
         """
         Notifications dispatcher.
         """
-        assert(self._robot_id == routing_id)
+        assert(self.robot_id == routing_id)
         if (Messages.Registered.name == message_type):
             self._notify_registered(message)
         elif (Messages.Input.name == message_type):
@@ -443,19 +456,19 @@ class Robot(object):
         """
         if (message.name):
             self._registered = True
-            self._name = message.name
+            self._robot_id = message.name
             #print 'Robot registered (robot_id = {0} ; name = {1})'.format(
                 #self._robot_id,
                 #self._name)
             # this is a hack as we should only register when the game starts
             self._message_hub.register(
-                self, Messages.Input.name, self._robot_id)
+                self, Messages.Input.name, self.robot_id)
 
     def _notify_input(self, message):
         """
         Make the robot move.
         """
-        print '_notify_input({0})'.format(message)
+        #print '_notify_input({0})'.format(message)
         self._left = message.move.left
         self._right = message.move.right
         self._fire1 = message.fire.weapon1
@@ -500,19 +513,22 @@ class SocketsLister(object):
         import pprint
         pp = pprint.PrettyPrinter(indent=4)
         usable_sockets = []
-        devices = bluetooth.discover_devices()
-        for device in devices:
-            service = bluetooth.find_service(address=device)
-            if (service):
-                info_map = service[0]
-                pp.pprint(info_map)
-                protocol = info_map['protocol']
-                if ('RFCOMM' == protocol):
-                    socket = bluetooth.BluetoothSocket(bluetooth.RFCOMM)
-                    host = info_map['host']
-                    port = info_map['port']
-                    socket.connect((host, port))
-                    usable_sockets.append(socket)
+        try:
+            devices = bluetooth.discover_devices()
+            for device in devices:
+                service = bluetooth.find_service(address=device)
+                if (service):
+                    info_map = service[0]
+                    pp.pprint(info_map)
+                    protocol = info_map['protocol']
+                    if ('RFCOMM' == protocol):
+                        socket = bluetooth.BluetoothSocket(bluetooth.RFCOMM)
+                        host = info_map['host']
+                        port = info_map['port']
+                        socket.connect((host, port))
+                        usable_sockets.append(socket)
+        except bluetooth.BluetoothError as exception:
+            print exception
         return usable_sockets
 
 
@@ -610,12 +626,16 @@ class Program(object):
         self._actionner = Actionner()
         self._robots = {}  # id -> Robot
 
-    def add_robot(self, robot_id, device=None):
+    def add_robot(self, internal_robot_id, device=None):
         """
         Create a rebot and ask it to register into the server.
         """
-        robot = Robot(robot_id, self._message_hub, self._actionner, device)
-        self._robots[robot_id] = robot
+        robot = Robot(
+            internal_robot_id,
+            self._message_hub,
+            self._actionner,
+            device)
+        self._robots[internal_robot_id] = robot
         robot.queue_register()
 
     @property
@@ -636,17 +656,21 @@ def main():
     parser.add_argument(
         "-P", "--publisher-port",
         help="Publisher port (the server publish and we subscribe).",
-        default=9001, type=int)
+        default=9000, type=int)
     parser.add_argument(
         "-p", "--puller-port",
         help="Puller port (the server pulls and we push).",
-        default=9000, type=int)
+        default=9001, type=int)
     parser.add_argument(
         "--address",
         help="The server address",
         default="127.0.0.1", type=str)
     arguments = parser.parse_args()
-    sockets_lister = SocketsLister()
+    import bluetooth
+    try:
+        sockets_lister = SocketsLister()
+    except bluetooth.BluetoothError as exception:
+        print exception
     robots = ['951']
     program = Program(arguments)
     for robot in robots:
@@ -657,6 +681,8 @@ def main():
             print 'Device found for robot', robot
         else:
             print 'Oups, no device to associate to robot', robot
+    import time
+    time.sleep(0.5)
     while (True):
         program.step()
 
