@@ -12,6 +12,8 @@ class Messages(Enum):
     Registered = 'Registered'
     Input = 'Input'
     GameState = 'GameState'
+    Welcome = 'Welcome'
+    Goodbye = 'Goodbye'
 
 
 REGISTRY = {
@@ -19,6 +21,8 @@ REGISTRY = {
     Messages.Registered.name: lambda: server_game_messages.Registered(),
     Messages.Input.name: lambda: controller_messages.Input(),
     Messages.GameState.name: lambda: server_game_messages.GameState(),
+    Messages.Welcome.name: lambda: server_game_messages.Welcome(),
+    Messages.Goodbye.name: lambda: server_game_messages.Goodbye(),
 }
 
 
@@ -140,9 +144,9 @@ class MessageHub(object):
                     print 'listener =', listener
                     print 'expected_routing_id =', expected_routing_id
                 if (expected_routing_id):
-                    is_expected = True
-                else:
                     is_expected = (expected_routing_id == routing_id)
+                else:
+                    is_expected = True
                 if (is_expected):
                     listener.notify(message_type, routing_id, message)
         for payload in self._outgoing:
@@ -427,7 +431,9 @@ class Robot(object):
         Post a message to ask for the registration of the robot.
         """
         message = REGISTRY[Messages.Register.name]()
-        message.robot_id = self.robot_id
+        message.temporary_robot_id = self.robot_id
+        message.video_port = 42
+        message.video_address = "oups"
         payload = '{0} {1} {2}'.format(
             self.robot_id,
             Messages.Register.name,
@@ -454,9 +460,9 @@ class Robot(object):
         """
         Flag the robot as registered if the server replied with a name.
         """
-        if (message.name):
+        if (message.robot_id):
             self._registered = True
-            self._robot_id = message.name
+            self._robot_id = message.robot_id
             #print 'Robot registered (robot_id = {0} ; name = {1})'.format(
                 #self._robot_id,
                 #self._name)
@@ -564,10 +570,10 @@ class EV3Device(object):
         str_motor = "{0:02d}".format(motor)
         if (safe):
             converted_power = max(-31, min(31, power))
-            if (converted_power < 0):
-                converted_power = 64 + converted_power
         else:
             converted_power = power
+        if (converted_power < 0):
+            converted_power = 64 + converted_power
         str_power = hex(converted_power)[2:].zfill(2)
         if (MoveOrder.POWER == move):
             order = "A4"
@@ -595,7 +601,12 @@ class EV3Device(object):
         # 31 is a magic number comming from trial and error
         scaled_left = int(float(left) * float(31))
         scaled_right = int(float(right) * float(31))
-        command = self.get_move_command(Motors.A.value, scaled_left)
+        if (scaled_right > 30):
+            scaled_right = 72
+        if (scaled_left > 30):
+            scaled_left = 72
+        command = self.get_move_command(
+            Motors.A.value, scaled_left, safe=False)
         self._socket.send(command)
         command = self.get_move_command(Motors.D.value, scaled_right)
         self._socket.send(command)

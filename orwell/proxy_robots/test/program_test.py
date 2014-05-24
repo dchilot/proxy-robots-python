@@ -16,7 +16,7 @@ INPUTS = [
 class FakeDevice(object):
     def __init__(self, robot_id):
         self.expected_moves = []
-        for other_internal_robot_id, other_robot_id,\
+        for other_temporary_robot_id, other_robot_id,\
                 left, right, fire1, fire2 in INPUTS:
             if (robot_id == other_robot_id):
                 self.expected_moves.append((left, right))
@@ -42,11 +42,13 @@ class FakeArguments(object):
 class MockPusher(object):
     def __init__(self, address, port, context):
         self.messages = []
-        for robot_id, _, _ in ROBOT_DESCRIPTORS:
+        for temporary_robot_id, _, _ in ROBOT_DESCRIPTORS:
             message = opp.REGISTRY[opp.Messages.Register.name]()
-            message.robot_id = robot_id
+            message.temporary_robot_id = temporary_robot_id
+            message.video_port = 42
+            message.video_address = "oups"
             payload = "{0} {1} {2}".format(
-                robot_id,
+                temporary_robot_id,
                 opp.Messages.Register.name,
                 message.SerializeToString())
             self.messages.append(payload)
@@ -60,16 +62,16 @@ class MockPusher(object):
 class MockSubscriber(object):
     def __init__(self, address, port, context):
         self.messages = [None]
-        for robot_id, robot_name, _ in ROBOT_DESCRIPTORS:
+        for temporary_robot_id, robot_name, _ in ROBOT_DESCRIPTORS:
             message = opp.REGISTRY[opp.Messages.Registered.name]()
-            message.name = robot_name
+            message.robot_id = robot_name
             message.team = server_game_messages.BLU
             payload = "{0} {1} {2}".format(
-                robot_id,
+                temporary_robot_id,
                 opp.Messages.Registered.name,
                 message.SerializeToString())
             self.messages.append(payload)
-        for internal_robot_id, robot_id, left, right, fire1, fire2 in INPUTS:
+        for temporary_robot_id, robot_id, left, right, fire1, fire2 in INPUTS:
             message = opp.REGISTRY[opp.Messages.Input.name]()
             message.move.left = left
             message.move.right = right
@@ -92,11 +94,11 @@ def test_robot_registration():
     print "\ntest_robot_registration"
     arguments = FakeArguments()
     program = opp.Program(arguments, MockSubscriber, MockPusher)
-    for internal_robot_id, _, device in ROBOT_DESCRIPTORS:
-        program.add_robot(internal_robot_id, device)
+    for temporary_robot_id, _, device in ROBOT_DESCRIPTORS:
+        program.add_robot(temporary_robot_id, device)
     program.step()
     program.step()
-    for (internal_robot_id, robot), expected in zip(
+    for (temporary_robot_id, robot), expected in zip(
             program.robots.items(),
             ROBOT_DESCRIPTORS):
         expected_robot_id, expected_robot_name, _ = expected
@@ -107,21 +109,21 @@ def test_robot_registration():
 
 
 def check_simple_input(program):
-    for internal_robot_id, robot_id, _ in ROBOT_DESCRIPTORS:
-        robot = program.robots[internal_robot_id]
+    for temporary_robot_id, robot_id, _ in ROBOT_DESCRIPTORS:
+        robot = program.robots[temporary_robot_id]
         assert_equals(0.0, robot.left)
         assert_equals(0.0, robot.right)
         assert_false(robot.fire1)
         assert_false(robot.fire2)
-    for internal_robot_id, robot_id, left, right, fire1, fire2 in INPUTS:
+    for temporary_robot_id, robot_id, left, right, fire1, fire2 in INPUTS:
         program.step()
-        robot = program.robots[internal_robot_id]
+        robot = program.robots[temporary_robot_id]
         assert_equals(left, robot.left)
         assert_equals(right, robot.right)
         assert_equals(fire1, robot.fire1)
         assert_equals(fire2, robot.fire2)
-    for internal_robot_id, _, device in ROBOT_DESCRIPTORS:
-        print 'internal_robot_id =', internal_robot_id
+    for temporary_robot_id, _, device in ROBOT_DESCRIPTORS:
+        print 'temporary_robot_id =', temporary_robot_id
         assert_equals(len(device.expected_moves), 0)
 
 
@@ -185,7 +187,7 @@ class InputMocker(Mocker):
     def __init__(self):
         super(Mocker, self).__init__()
         self._state = InputMockerState.Created
-        self._internal_robot_id = INPUT_ROBOT_DESCRIPTOR[0]
+        self._temporary_robot_id = INPUT_ROBOT_DESCRIPTOR[0]
         self._robot_id = INPUT_ROBOT_DESCRIPTOR[1]
         self._team = server_game_messages.BLU
 
@@ -194,12 +196,12 @@ class InputMocker(Mocker):
         payload = None
         if (InputMockerState.Register == self._state):
             message = opp.REGISTRY[opp.Messages.Registered.name]()
-            message.name = self._robot_id
+            message.robot_id = self._robot_id
             message.team = self._team
-            # here we need to reply with the internal_robot_id
+            # here we need to reply with the temporary_robot_id
             # which was used to initate the conversation
             payload = "{0} {1} {2}".format(
-                self._internal_robot_id,
+                self._temporary_robot_id,
                 opp.Messages.Registered.name,
                 message.SerializeToString())
             print 'Fake message =', message
@@ -225,7 +227,7 @@ class InputMocker(Mocker):
             assert_equals(opp.Messages.Register.name, message_type)
             message = opp.REGISTRY[message_type]()
             message.ParseFromString(raw_message)
-            assert_equals(self._internal_robot_id, message.robot_id)
+            assert_equals(self._temporary_robot_id, message.temporary_robot_id)
             self._state = InputMockerState.Register
 
 
@@ -237,8 +239,8 @@ def test_robot_input():
         arguments,
         input_mocker.publisher_init_faker(),
         input_mocker.pusher_init_faker())
-    internal_robot_id, robot_name, device = INPUT_ROBOT_DESCRIPTOR
-    program.add_robot(internal_robot_id, device)
+    temporary_robot_id, robot_name, device = INPUT_ROBOT_DESCRIPTOR
+    program.add_robot(temporary_robot_id, device)
     program.step()
     program.step()
     program.step()
@@ -267,7 +269,7 @@ def test_fake_socket():
     program = opp.Program(arguments)
     for robot in robots:
         socket = FakeSocket(
-            ['\x0c\x00\x00\x00\x80\x00\x00\xa4\x00\x01\x1f\xa6\x00\x01',
+            ['\x0c\x00\x00\x00\x80\x00\x00\xa4\x00\x01H\xa6\x00\x01',
              '\x0c\x00\x00\x00\x80\x00\x00\xa4\x00\x08\x1f\xa6\x00\x08',
              '\t\x00\x00\x00\x80\x00\x00\xa3\x00\t\x00'])
         device = opp.EV3Device(socket)
