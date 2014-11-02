@@ -45,8 +45,8 @@ class MockPusher(object):
         for temporary_robot_id, _, _ in ROBOT_DESCRIPTORS:
             message = opp.REGISTRY[opp.Messages.Register.name]()
             message.temporary_robot_id = temporary_robot_id
-            message.video_port = 42
-            message.video_address = "oups"
+            message.video_url = "oups:42"
+            message.image = "None"
             payload = "{0} {1} {2}".format(
                 temporary_robot_id,
                 opp.Messages.Register.name,

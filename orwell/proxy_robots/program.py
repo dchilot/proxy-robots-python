@@ -432,8 +432,8 @@ class Robot(object):
         """
         message = REGISTRY[Messages.Register.name]()
         message.temporary_robot_id = self.robot_id
-        message.video_port = 42
-        message.video_address = "oups"
+        message.video_url = "oups:42"
+        message.image = "None"
         payload = '{0} {1} {2}'.format(
             self.robot_id,
             Messages.Register.name,
